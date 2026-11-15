@@ -6,5 +6,5 @@ type: software
 authors:
   - name: "Tangent Atlas"
 license: Apache-2.0
-repository-code: "https://github.com/tangent-atlas/forward-test"
+repository-code: "https://github.com/tangent-atlas/TangentAtlas.ForwardTest"
 keywords: [forward test, pre-registration, volatility targeting, direct indexing, personal index]
