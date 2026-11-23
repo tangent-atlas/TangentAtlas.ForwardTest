@@ -50,10 +50,22 @@ def largest(limit: int = 100, offset: int = 0) -> list[str]:
     return [r["code"].replace(".", "-") for r in rows.get("data", [])]
 
 
+def listings(exchange: str, limit: int = 100, offset: int = 0) -> list[tuple[str, float]]:
+    """One exchange's listings (NYSE or NASDAQ), largest first by the vendor's market capitalization, as (code, market cap).
+    The screener's "us" filter also returns over-the-counter lines (foreign companies' ordinary shares and depositary
+    receipts on the pink sheets); asking for one exchange at a time leaves them out."""
+    rows = _get("screener", sort="market_capitalization.desc", filters=json.dumps([["exchange", "=", exchange]]),
+                limit=limit, offset=offset)
+    return [(r["code"].replace(".", "-"), float(r.get("market_capitalization") or 0)) for r in rows.get("data", [])]
+
+
 def company(code: str, on: dt.date) -> dict:
-    """Name, type, country, exchange, CIK, and shares outstanding as last reported on or before `on`."""
-    data = _get("fundamentals/" + symbol(code), filter="General,outstandingShares")
-    return parse_company(code, data, on)
+    """Name, type, country, exchange, CIK, and shares outstanding as last reported on or before `on`. Two requests, as the
+    backtest's loader makes them (TangentAtlas.Backtest, Eodhd.cs): `filter=General` answers with the General object
+    itself, and `filter=outstandingShares` with {"annual": ..., "quarterly": ...}."""
+    general = _get("fundamentals/" + symbol(code), filter="General")
+    shares = _get("fundamentals/" + symbol(code), filter="outstandingShares")
+    return parse_company(code, general, shares, on)
 
 
 def _table(value) -> dict:
@@ -61,30 +73,42 @@ def _table(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def parse_company(code: str, data, on: dt.date) -> dict:
-    """The fundamentals answer, read defensively: a listing whose share counts aren't the usual table has no reported
+US_NAMES = {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}
+
+
+def head_office(general: dict) -> str:
+    """The company's head-office country from its address: "US" for the United States, otherwise the country as the vendor
+    names it, "" when there is no address. Not CountryISO, which EODHD sets to "US" for every listing on a US exchange
+    (Taiwan Semiconductor included; found November 23, 2026)."""
+    country = str(_table(general.get("AddressData")).get("Country") or "").strip()
+    return "US" if country.upper() in US_NAMES else country
+
+
+def parse_company(code: str, general, shares, on: dt.date) -> dict:
+    """The two fundamentals answers, read defensively: a listing whose share counts aren't the usual table has no reported
     shares, so the rules can't rank it (rules.eligible requires shares above zero). It is named in the log."""
-    data = _table(data)
-    general = _table(data.get("General"))
-    quarters = _table(data.get("outstandingShares")).get("quarters")
-    rows = quarters.values() if isinstance(quarters, dict) else quarters if isinstance(quarters, list) else []
+    general = _table(general)
+    shares = _table(shares)
+    quarterly = shares.get("quarterly", shares.get("quarters"))
+    rows = quarterly.values() if isinstance(quarterly, dict) else quarterly if isinstance(quarterly, list) else []
     reported = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         try:
             day = dt.date.fromisoformat(row["dateFormatted"])
-            shares = float(row.get("shares") or 0)
+            count = float(row.get("shares") or 0)
         except (KeyError, TypeError, ValueError):
             continue
-        if day <= on and shares > 0:
-            reported.append((day, shares))
+        if day <= on and count > 0:
+            reported.append((day, count))
     if not reported:
         print(f"No shares outstanding reported for {code} on or before {on}; it can't be ranked.")
     return {
         "name": general.get("Name") or "",
-        "type": general.get("Type") or "",
-        "country": general.get("CountryISO") or "",
+        "type": "Depositary Receipt" if str(general.get("HomeCategory") or "").upper().startswith("ADR")
+                else general.get("Type") or "",
+        "country": head_office(general),
         "exchange": general.get("Exchange") or "",
         "cik": str(general.get("CIK") or "").lstrip("0"),
         "shares": max(reported)[1] if reported else 0.0,

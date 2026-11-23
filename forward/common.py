@@ -13,6 +13,20 @@ def bars(codes, start: dt.date, end: dt.date) -> dict[str, dict[dt.date, dict]]:
     return {code: eodhd.daily(code, start, end) for code in codes}
 
 
+def candidate(code: str, day: dt.date) -> rules.Candidate | None:
+    """One listing's ranking inputs at `day`'s close: company data, the last close in the week to `day`, and whether it has
+    a close on or before the seasoning date. None if it didn't trade in that week."""
+    info = eodhd.company(code, day)
+    since = rules.seasoning_date(day)
+    prices = eodhd.daily(code, since - dt.timedelta(days=10), day)
+    recent = [d for d in prices if d >= day - dt.timedelta(days=7)]
+    if not recent:
+        return None
+    bar = prices[max(recent)]
+    return rules.Candidate(code, info["cik"], info["name"], info["type"], info["country"], info["exchange"], bar["close"],
+                           bar["volume"], rules.in_class_units(code, info["shares"]), min(prices) <= since)
+
+
 def adjusted_on(data: dict[str, dict[dt.date, dict]], day: dt.date) -> dict[str, float]:
     """Each listing's adjusted close on `day`, or its last before it (a listing that didn't trade keeps its price)."""
     out = {}

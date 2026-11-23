@@ -28,6 +28,7 @@ class Candidate:
     close: float
     volume: float
     shares: float          # shares outstanding as last reported, in the units of this listing's price
+    seasoned: bool = True  # traded for at least SEASONING_MONTHS by the ranking date (see seasoning_date)
 
     @property
     def value(self) -> float:
@@ -36,6 +37,21 @@ class Candidate:
     @property
     def dollar_volume(self) -> float:
         return self.close * self.volume
+
+
+SEASONING_MONTHS = 12          # a new listing is ranked once it has traded this long (the S&P 500's rule for IPOs)
+
+
+def seasoning_date(day: dt.date) -> dt.date:
+    """The date SEASONING_MONTHS before `day`: a listing with a close on or before it has traded long enough to be ranked on
+    `day`. Counted from the company's first close on record, spin-offs included (amendment of November 23, 2026)."""
+    year, month = divmod(day.month - 1 - SEASONING_MONTHS, 12)
+    year, month = day.year + year, month + 1
+    while True:
+        try:
+            return dt.date(year, month, day.day)
+        except ValueError:          # the 29th to 31st of a shorter month: its last day
+            day = day - dt.timedelta(days=1)
 
 
 def in_class_units(code: str, shares: float) -> float:
@@ -49,8 +65,9 @@ def in_class_units(code: str, shares: float) -> float:
 
 
 def eligible(c: Candidate, excluded_codes=frozenset(), excluded_ciks=frozenset()) -> bool:
-    """US common stock on a US exchange; no partnerships or depositary receipts; not on an exclusion list (none by default)."""
-    if c.close <= 0 or c.shares <= 0:
+    """US common stock on a US exchange; no partnerships or depositary receipts; traded for at least SEASONING_MONTHS; not on
+    an exclusion list (none by default). The country is the company's head office, as the vendor's company data gives it."""
+    if c.close <= 0 or c.shares <= 0 or not c.seasoned:
         return False
     if c.security_type.lower() != "common stock":
         return False

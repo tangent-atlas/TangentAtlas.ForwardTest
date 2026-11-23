@@ -40,15 +40,19 @@ def test_quarter_dates():
 
 
 class FakeMarket:
-    """Business days with random prices from September 2026."""
-    def __init__(self, codes, end, holidays=()):
+    """Business days with random prices from June 2025 (so every listing has traded for 12 months by the rankings), except
+    the listings in `listed`, which first trade on the date given."""
+    def __init__(self, codes, end, holidays=(), listed=None):
         rnd = random.Random(1)
-        self.days = [d for d in (dt.date(2026, 9, 1) + dt.timedelta(n) for n in range((end - dt.date(2026, 9, 1)).days + 1))
+        first = dt.date(2025, 6, 2)
+        self.days = [d for d in (first + dt.timedelta(n) for n in range((end - first).days + 1))
                      if d.weekday() < 5 and d not in holidays]
         self.series = {}
         for code in codes:
             p, s = 100.0, {}
             for d in self.days:
+                if listed and d < listed.get(code, first):
+                    continue
                 p *= 1 + rnd.gauss(0.0005, 0.015)
                 s[d] = {"close": p, "adjusted": p, "volume": 1e6}
             self.series[code] = s

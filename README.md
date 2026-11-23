@@ -6,7 +6,7 @@ A public, dated record of how the **Joe 10** performs from November 2026 on: Tan
 - **The track:** [data/joe10.csv](data/joe10.csv), updated after every US market close: the share in stocks, and the Joe 10 and SPY, each starting at 1.0.
 - **The tiers' rules and predictions:** [PREREGISTRATION-TIERS.md](PREREGISTRATION-TIERS.md), archived on Zenodo as version 1.2 before their first close. Their tracks: [data/joe25.csv](data/), `joe50.csv`, `joe100.csv`.
 - **Monthly reports:** [reports/](reports/), every model every month, each also a release that Zenodo archives with its own DOI.
-- **The ranking archive:** at every quarterly ranking the full ranking inputs (the 300 largest US listings) are kept privately, because they hold the vendor's licensed prices; their SHA-256 hashes are published the same day in [archive/hashes.csv](archive/hashes.csv), so any model later rebuilt from them can be shown to have had no look-ahead.
+- **The ranking archive:** at every quarterly ranking the full ranking inputs (every listing examined to find the 300 largest NYSE and Nasdaq companies that pass the rules) are kept privately, because they hold the vendor's licensed prices; their SHA-256 hashes are published the same day in [archive/hashes.csv](archive/hashes.csv), so any model later rebuilt from them can be shown to have had no look-ahead.
 
 In short, the Joe 10 holds the 10 largest US companies by full market value, weighted by size at each quarterly rebalance and traded back to those weights every day (Constant Weight). Its cash is set every day so its volatility stays at 15%, about an index fund's volatility in an average month. It is compared with SPY, and with SPY plus cash at the same risk.
 
@@ -25,6 +25,8 @@ EODHD_API_TOKEN=... python -m forward.tiers daily
 Version 1.0 (November 4, 2026) froze a forward test of the Ken 11, the illustration on tangentatlas.com, built for one fictional customer (his own risk and his own exclusions). It was withdrawn on November 4, 2026, before its first close, so that the public record tests a generic model rather than an illustration; no Ken 11 results were ever computed. Its rules remain in version 1.0 on Zenodo.
 
 Version 1.2 (November 2026) adds the Joe 25, Joe 50 and Joe 100 and the ranking archive. The Joe 10's rules, code and track are unchanged.
+
+Version 1.3 (November 23, 2026) amends the rules of every track before the December 2026 ranking: the country is the company's head office and the vendor's ADR flag marks a depositary receipt (the vendor had begun reporting every US listing as a US company), and a listing is ranked only after 12 months of trading, as in the S&P 500. The tiers' pool becomes the 300 largest NYSE and Nasdaq companies that pass the rules (it had been the vendor's 300 largest US listings, of which 111 passed). It changes no holding to date and no backtest result; it keeps SpaceX out of the December 2026 Joe 10. See section 6 of [PREREGISTRATION-JOE10.md](PREREGISTRATION-JOE10.md).
 
 ## What this is not
 

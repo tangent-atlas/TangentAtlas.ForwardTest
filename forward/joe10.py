@@ -153,13 +153,9 @@ def rank_as_of(day: dt.date) -> dict:
     pool = eodhd.largest(100)
     candidates = []
     for code in pool:
-        info = eodhd.company(code, day)
-        prices = eodhd.daily(code, day - dt.timedelta(days=7), day)
-        if not prices:
-            continue
-        bar = prices[max(prices)]
-        candidates.append(rules.Candidate(code, info["cik"], info["name"], info["type"], info["country"], info["exchange"],
-                                          bar["close"], bar["volume"], rules.in_class_units(code, info["shares"])))
+        c = common.candidate(code, day)
+        if c is not None:
+            candidates.append(c)
     top = rules.rank(candidates, SIZE, EXCLUDED, set())
     chosen = {code for code, _ in top}
     return {"ranked": day.isoformat(), "shares": {c.code: c.shares for c in candidates if c.code in chosen}}

@@ -2,6 +2,9 @@
 
 *Written November 23, 2026. Frozen when version 1.2 of this repository is released and archived on Zenodo, before the tiers' first close. A change to these rules is a new model, published as such. The Joe 10 (PREREGISTRATION-JOE10.md, §20) is unchanged.*
 
+
+> **Amendment of November 23, 2026 (version 1.3), before the tiers' first close.** The tiers follow the Joe 10's rules as amended the same day (PREREGISTRATION-JOE10.md, section 6: the head-office country, the vendor's ADR flag, and 12 months of trading before a listing is ranked). The pool is the 300 largest NYSE and Nasdaq companies that pass the rules (section 2). A ranking that finds fewer eligible companies than it needs stops the run instead of holding fewer. Versions 1.2 and 1.2.1 were released, but no tier had started: their first starts failed on a data-reading error, before any close was recorded.
+
 ## 1. Why these tracks exist
 
 A customer's personal index holds as many companies as his account can hold accurately in whole shares (section 4). Small accounts hold 10, larger ones 25, 50 or 100. Each of those defaults gets its own public forward record, so every customer can see the record of the model his own account runs.
@@ -10,10 +13,10 @@ A customer's personal index holds as many companies as his account can hold accu
 
 ## 2. The rules (frozen)
 
-Exactly the Joe 10's rules (§20, section 2), run by the same code (`forward/joe10.py` and `forward/rules.py`, unchanged), except:
+Exactly the Joe 10's rules (§20, section 2), run by the same code (`forward/joe10.py` and `forward/rules.py`; as amended November 23, 2026), except:
 
 - **Size:** the 25, 50 and 100 largest companies (the Joe 25, Joe 50 and Joe 100).
-- **The pool:** ranked from the vendor's 300 largest US listings by market capitalization (the Joe 10 draws from 100), so the Joe 100 can be filled after exclusions of non-common stock.
+- **The pool:** the 300 largest companies on the NYSE and Nasdaq that pass the rules. Listings on the two exchanges are examined in order of the vendor's market capitalization until 300 companies pass (share classes of one company count once); those are then ranked by full market value as in the Joe 10. *(Amended November 23, 2026, before the first close; it was "the vendor's 300 largest US listings", of which only 111 passed the rules, because the vendor's US list includes over-the-counter lines of foreign companies.)* The Joe 10 still draws from the 100 largest US listings, which always hold its 10.
 - **The start:** each tier is ranked at the close of the last trading day before the day it is initialized, held fully invested at those weights for the 45 calendar days before that close (only to give the thermostat its 21-day history, as the Joe 10 was before its start), and starts at 1.0 at the first close after the day it is initialized.
 - **From then on:** the same quarterly schedule as the Joe 10 (ranked at the close of the second Friday of March, June, September and December; rebalanced at the close of the third Friday), the same thermostat at 15% with its 2-point and 0.5% bands, the SEC fee, no exclusions, cash earning nothing, every trade at the closing price, total return from adjusted closes.
 
@@ -21,7 +24,7 @@ The tracks are index values (fractional holdings), as the Joe 10's is. Customers
 
 ## 3. The ranking archive
 
-At every quarterly ranking, and at the tiers' start, the full ranking inputs of the 300-listing pool (company, CIK, type, country, exchange, closing price, volume, shares outstanding as last reported, market value, rank) are saved to a private archive, and the file's SHA-256 is published the same day in `archive/hashes.csv`. The inputs stay private because they hold the vendor's licensed prices; the hash proves later that a file was not changed after the day. From the archive, any number of companies or any risk setting can be rebuilt later without look-ahead (for example a Joe 250, or the two-speed thermostat), as agreed on November 5, 2026. Such rebuilt models are research, not part of this pre-registration.
+At every quarterly ranking, and at the tiers' start, the full ranking inputs of every listing examined for the pool (company, CIK, type, country, exchange, closing price, volume, shares outstanding as last reported, market value, rank) are saved to a private archive, and the file's SHA-256 is published the same day in `archive/hashes.csv`. The inputs stay private because they hold the vendor's licensed prices; the hash proves later that a file was not changed after the day. From the archive, any number of companies or any risk setting can be rebuilt later without look-ahead (for example a Joe 250, or the two-speed thermostat), as agreed on November 5, 2026. Such rebuilt models are research, not part of this pre-registration.
 
 ## 4. The account-size rule (the product's default; published, mechanical)
 
@@ -52,7 +55,8 @@ As the Joe 10's: SPY fully invested, and SPY plus cash at each tier's own volati
 - **T3.** Tracking error against SPY falls as the number of companies grows (Joe 100 lowest, Joe 10 highest).
 - **T4.** Each tier's annual return differs from SPY plus cash at its own volatility by between −1 and +3 points.
 
-**The founder's:** *(any, added before the first close)*
+**The founder's** (recorded November 23, 2026, before the first close):
+- **F23.** What the backtests show: more companies do not change the return, but lower the volatility and the worst drop. It works as a function of the number of companies: the more companies, the lower the volatility and the higher the Sharpe ratio, up to a point past which the gain diminishes against the number of companies that must be managed.
 
 ## 8. What this is not
 

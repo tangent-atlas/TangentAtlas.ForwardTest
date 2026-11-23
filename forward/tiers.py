@@ -3,11 +3,12 @@
     python -m forward.tiers init      # freeze every tier not yet started: ranked at the latest close, started at the next
     python -m forward.tiers daily     # archive any quarterly ranking that has closed, then bring each tier up to date
 
-Each tier is the Joe 10's rules with a different number of companies, drawn from a wider pool (the vendor's 300 largest US
-listings, so the Joe 100 can be filled). The rules run through the Joe 10's own code (`joe10.Portfolio`, `rules`), unchanged.
+Each tier is the Joe 10's rules with a different number of companies, ranked from a wider pool: the 300 largest companies on
+the NYSE and Nasdaq that the rules accept (US head office, common stock, not a depositary receipt, 12 months of trading). The
+rules run through the Joe 10's own code (`joe10.Portfolio`, `rules`).
 State in state/<tier>.json, the series in data/<tier>.csv, monthly reports in reports/<tier>-YYYY-MM.md.
 
-The ranking archive: at every quarterly ranking (and each tier's start) the full ranking inputs of the 300-listing pool are
+The ranking archive: at every quarterly ranking (and each tier's start) the full ranking inputs of every listing examined are
 written to ARCHIVE_DIR (default archive-private/, never committed: it holds EODHD's prices, which are licensed), and the file's
 SHA-256 is appended to archive/hashes.csv, which is public. Anyone later shown an archive file can check it against the hash
 published on the day, so a model rebuilt from it (any number of companies, any risk setting) had no look-ahead.
@@ -17,6 +18,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import hashlib
+import heapq
 import json
 import os
 import sys
@@ -27,7 +29,8 @@ from . import common, eodhd, joe10, rules
 # The tiers (frozen in PREREGISTRATION-TIERS.md): name -> number of companies.  Every other rule is the Joe 10's.
 TIERS = {"joe25": 25, "joe50": 50, "joe100": 100}
 LABELS = {"joe25": "Joe 25", "joe50": "Joe 50", "joe100": "Joe 100"}
-POOL = 300                    # the vendor's largest US listings the ranking draws from
+POOL = 300                    # eligible companies the ranking draws from: the largest on EXCHANGES that the rules accept
+EXCHANGES = ("NYSE", "NASDAQ")
 BACKFILL_DAYS = 45            # calendar days held fully invested before the start, to give the thermostat its 21 returns
 
 ROOT = common.ROOT
@@ -62,43 +65,66 @@ def _save(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
-def pool() -> list[str]:
-    """The vendor's POOL largest US listings, in pages of 100 (the screener's most per request)."""
-    codes: list[str] = []
-    for offset in range(0, POOL, 100):
-        page = eodhd.largest(min(100, POOL - offset), offset)
-        codes += [c for c in page if c not in codes]
-        if len(page) < 100:
-            break
-    if len(codes) < POOL:
-        raise RuntimeError(f"The screener returned {len(codes)} listings; the tiers' pool is {POOL}.")
-    return codes
+def listings_by_value():
+    """Every NYSE and Nasdaq listing, largest first by the vendor's market capitalization (the two exchanges merged), each
+    once; the screener's pages (100 rows at most) are fetched only as far as they are read."""
+    def exchange(name):
+        offset = 0
+        while True:
+            page = eodhd.listings(name, 100, offset)
+            yield from page
+            if len(page) < 100:
+                return
+            offset += 100
+    seen = set()
+    for code, _ in heapq.merge(*(exchange(name) for name in EXCHANGES), key=lambda row: -row[1]):
+        if code not in seen:
+            seen.add(code)
+            yield code
 
 
 def candidates_as_of(day: dt.date, purpose: str) -> list[rules.Candidate]:
-    """The pool's ranking inputs at `day`'s close, fetched once per run and archived (with the hash published)."""
+    """The pool at `day`'s close: listings examined in order of market value until POOL companies pass the rules (share
+    classes of one company count once). Every listing examined is kept with its inputs, fetched once per run, and archived
+    (with the hash published)."""
     if day in _candidates:
         return _candidates[day]
-    candidates = []
-    for code in pool():
-        info = eodhd.company(code, day)
-        prices = eodhd.daily(code, day - dt.timedelta(days=7), day)
-        if not prices:
+    candidates, companies = [], set()
+    for code in listings_by_value():
+        c = common.candidate(code, day)
+        if c is None:
             continue
-        bar = prices[max(prices)]
-        candidates.append(rules.Candidate(code, info["cik"], info["name"], info["type"], info["country"], info["exchange"],
-                                          bar["close"], bar["volume"], rules.in_class_units(code, info["shares"])))
+        candidates.append(c)
+        if rules.eligible(c, joe10.EXCLUDED):
+            companies.add(c.cik or c.code)
+            if len(companies) == POOL:
+                break
+    else:
+        raise RuntimeError(f"Only {len(companies)} companies on the NYSE and Nasdaq pass the rules on {day}; the pool is {POOL}.")
+    check_share_counts(day, candidates)
     _candidates[day] = candidates
     _archive(day, purpose, candidates)
     return candidates
 
 
+MISSING_LIMIT = 0.10          # more than this share of the pool's US common stocks without share counts stops the run
+
+
+def check_share_counts(day: dt.date, candidates: list[rules.Candidate]) -> None:
+    """A data problem stops the run, naming what is missing, instead of quietly leaving companies out of the index."""
+    common_us = [c for c in candidates if c.security_type.lower() == "common stock" and c.country.upper() in ("US", "")]
+    missing = [c.code for c in common_us if c.shares <= 0]
+    if not common_us or len(missing) > MISSING_LIMIT * len(common_us):
+        raise RuntimeError(f"Share counts are missing for {len(missing)} of {len(common_us)} US common stocks in the pool on "
+                           f"{day} ({', '.join(missing[:20])}{' ...' if len(missing) > 20 else ''}): check EODHD before ranking.")
+
+
 def _archive(day: dt.date, purpose: str, candidates: list[rules.Candidate]) -> None:
     ranked = {code: i + 1 for i, (code, _) in enumerate(rules.rank(candidates, len(candidates)))}
     rows = [{"code": c.code, "cik": c.cik, "name": c.name, "type": c.security_type, "country": c.country,
-             "exchange": c.exchange, "close": c.close, "volume": c.volume, "shares": c.shares, "value": c.value,
+             "exchange": c.exchange, "close": c.close, "volume": c.volume, "shares": c.shares, "seasoned": c.seasoned, "value": c.value,
              "rank": ranked.get(c.code)} for c in sorted(candidates, key=lambda c: c.code)]
-    body = json.dumps({"ranked": day.isoformat(), "pool": POOL, "listings": rows}, indent=1, sort_keys=True).encode() + b"\n"
+    body = json.dumps({"ranked": day.isoformat(), "pool": POOL, "exchanges": list(EXCHANGES), "listings": rows}, indent=1, sort_keys=True).encode() + b"\n"
     name = f"ranking-{day.isoformat()}.json"
     existing = list(csv.DictReader(HASHES.open())) if HASHES.exists() else []
     if any(r["file"] == name for r in existing):
@@ -118,6 +144,8 @@ def _archive(day: dt.date, purpose: str, candidates: list[rules.Candidate]) -> N
 
 def ranking(day: dt.date, size: int, purpose: str) -> dict:
     top = rules.rank(candidates_as_of(day, purpose), size, joe10.EXCLUDED, set())
+    if len(top) < size:
+        raise RuntimeError(f"The ranking on {day} found {len(top)} eligible companies; the tier needs {size}.")
     chosen = {code for code, _ in top}
     return {"ranked": day.isoformat(), "shares": {c.code: c.shares for c in _candidates[day] if c.code in chosen}}
 

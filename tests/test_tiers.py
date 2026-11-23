@@ -11,13 +11,15 @@ def setup(tmp_path, monkeypatch, end):
     codes = [f"C{i:03d}" for i in range(320)] + ["SPY"]
     market = FakeMarket(codes, end, holidays={dt.date(2026, 11, 26)})
     monkeypatch.setattr(common.eodhd, "daily", market.daily)
-    listings = [c for c in codes if c != "SPY"]
+    stocks = [c for c in codes if c != "SPY"]
+    by_exchange = {"NYSE": [(c, 1e12 - i) for i, c in enumerate(stocks) if i % 2 == 0],
+                   "NASDAQ": [(c, 1e12 - i) for i, c in enumerate(stocks) if i % 2 == 1]}
     pages = []
-    def largest(limit=100, offset=0):                # the screener: at most 100 rows a request
+    def listings(exchange, limit=100, offset=0):     # the screener, one exchange at a time: at most 100 rows a request
         assert limit <= 100
-        pages.append(offset)
-        return listings[offset:offset + limit]
-    monkeypatch.setattr(common.eodhd, "largest", largest)
+        pages.append((exchange, offset))
+        return by_exchange[exchange][offset:offset + limit]
+    monkeypatch.setattr(common.eodhd, "listings", listings)
     market.pages = pages
     monkeypatch.setattr(common.eodhd, "company", market.company)
     monkeypatch.setattr(tiers, "STATE_DIR", tmp_path / "state")
@@ -58,7 +60,7 @@ def test_each_tier_starts_after_freezing_holds_its_size_and_rebalances_in_decemb
         with tiers.track_path(name).open() as f:
             assert len(f.readlines()) > 25
     assert dt.date(2026, 12, 11) in market.ranked_on
-    assert set(market.pages) == {0, 100, 200}        # three pages of the screener for a pool of 300
+    assert set(market.pages) == {("NYSE", 0), ("NYSE", 100), ("NASDAQ", 0), ("NASDAQ", 100)}   # read only as far as needed
     assert (tmp_path / "reports" / "joe50-2026-12.md").exists()
 
 
@@ -85,3 +87,47 @@ def test_rankings_are_archived_even_before_any_tier_starts(tmp_path, monkeypatch
     tiers.daily()
     rows = list(csv.DictReader((tmp_path / "archive" / "hashes.csv").open()))
     assert [(r["ranked"], r["purpose"]) for r in rows] == [("2026-12-11", "quarterly ranking 2026-12")]
+
+
+def test_a_ranking_that_cannot_fill_a_tier_stops_the_run(tmp_path, monkeypatch):
+    import pytest
+    from forward import rules
+    setup(tmp_path, monkeypatch, dt.date(2026, 11, 23))
+    few = [rules.Candidate(f"S{i}", f"S{i}", f"S{i}", "Common Stock", "US", "NYSE", 100.0, 1e6, 1e9) for i in range(60)]
+    monkeypatch.setattr(tiers, "candidates_as_of", lambda day, purpose: tiers._candidates.setdefault(day, few))
+    assert len(tiers.ranking(dt.date(2026, 12, 11), 50, "test")["shares"]) == 50
+    with pytest.raises(RuntimeError, match="found 60 eligible"):
+        tiers.ranking(dt.date(2026, 12, 11), 100, "test")
+
+
+def test_the_pool_is_the_300_largest_companies_the_rules_accept(tmp_path, monkeypatch):
+    """Listings the rules exclude (here every 20th, a depositary receipt; and a young listing) don't count toward the 300,
+    and share classes of one company count once; the walk goes as far down the list as it must."""
+    market, today = setup(tmp_path, monkeypatch, dt.date(2026, 11, 23))
+    company = market.company
+    def mixed(code, on):
+        info = company(code, on)
+        i = int(code[1:])
+        if i % 20 == 0:
+            info = {**info, "type": "Depositary Receipt"}
+        if code == "C002":
+            info = {**info, "cik": "C001"}               # a second share class of C001
+        return info
+    monkeypatch.setattr(common.eodhd, "company", mixed)
+    market.series["C003"] = {d: v for d, v in market.series["C003"].items() if d >= dt.date(2026, 6, 1)}   # a new listing
+    pool = tiers.candidates_as_of(dt.date(2026, 11, 20), "test")
+    from forward import rules
+    eligible = [c for c in pool if rules.eligible(c)]
+    assert len({c.cik for c in eligible}) == 300
+    assert len(pool) == 318 and pool[-1].code == "C317"     # 16 depositary receipts, one young listing, one second class
+    assert all(not rules.eligible(c) for c in pool if c.code in ("C000", "C020", "C003"))
+
+
+def test_too_few_eligible_companies_stops_the_run(tmp_path, monkeypatch):
+    import pytest
+    market, today = setup(tmp_path, monkeypatch, dt.date(2026, 11, 23))
+    company = market.company
+    monkeypatch.setattr(common.eodhd, "company",
+                        lambda code, on: {**company(code, on), "type": "Depositary Receipt" if int(code[1:]) % 3 == 0 else "Common Stock"})
+    with pytest.raises(RuntimeError, match="Only 213 companies"):
+        tiers.candidates_as_of(dt.date(2026, 11, 20), "test")
