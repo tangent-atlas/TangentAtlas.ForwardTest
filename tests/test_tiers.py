@@ -8,10 +8,17 @@ from tests.test_joe10 import FakeMarket
 
 
 def setup(tmp_path, monkeypatch, end):
-    codes = [f"C{i:03d}" for i in range(120)] + ["SPY"]
+    codes = [f"C{i:03d}" for i in range(320)] + ["SPY"]
     market = FakeMarket(codes, end, holidays={dt.date(2026, 11, 26)})
     monkeypatch.setattr(common.eodhd, "daily", market.daily)
-    monkeypatch.setattr(common.eodhd, "largest", market.largest)
+    listings = [c for c in codes if c != "SPY"]
+    pages = []
+    def largest(limit=100, offset=0):                # the screener: at most 100 rows a request
+        assert limit <= 100
+        pages.append(offset)
+        return listings[offset:offset + limit]
+    monkeypatch.setattr(common.eodhd, "largest", largest)
+    market.pages = pages
     monkeypatch.setattr(common.eodhd, "company", market.company)
     monkeypatch.setattr(tiers, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(tiers, "DATA_DIR", tmp_path / "data")
@@ -51,6 +58,7 @@ def test_each_tier_starts_after_freezing_holds_its_size_and_rebalances_in_decemb
         with tiers.track_path(name).open() as f:
             assert len(f.readlines()) > 25
     assert dt.date(2026, 12, 11) in market.ranked_on
+    assert set(market.pages) == {0, 100, 200}        # three pages of the screener for a pool of 300
     assert (tmp_path / "reports" / "joe50-2026-12.md").exists()
 
 
@@ -67,7 +75,7 @@ def test_every_ranking_is_archived_privately_and_its_hash_published_once(tmp_pat
     for r in rows:
         body = (tmp_path / "private" / r["file"]).read_bytes()
         assert hashlib.sha256(body).hexdigest() == r["sha256"]
-        assert int(r["listings"]) == 120
+        assert int(r["listings"]) == 300
 
 
 def test_rankings_are_archived_even_before_any_tier_starts(tmp_path, monkeypatch):

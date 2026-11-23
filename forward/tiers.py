@@ -62,12 +62,25 @@ def _save(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
+def pool() -> list[str]:
+    """The vendor's POOL largest US listings, in pages of 100 (the screener's most per request)."""
+    codes: list[str] = []
+    for offset in range(0, POOL, 100):
+        page = eodhd.largest(min(100, POOL - offset), offset)
+        codes += [c for c in page if c not in codes]
+        if len(page) < 100:
+            break
+    if len(codes) < POOL:
+        raise RuntimeError(f"The screener returned {len(codes)} listings; the tiers' pool is {POOL}.")
+    return codes
+
+
 def candidates_as_of(day: dt.date, purpose: str) -> list[rules.Candidate]:
     """The pool's ranking inputs at `day`'s close, fetched once per run and archived (with the hash published)."""
     if day in _candidates:
         return _candidates[day]
     candidates = []
-    for code in eodhd.largest(POOL):
+    for code in pool():
         info = eodhd.company(code, day)
         prices = eodhd.daily(code, day - dt.timedelta(days=7), day)
         if not prices:

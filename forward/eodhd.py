@@ -42,10 +42,11 @@ def daily(code: str, start: dt.date, end: dt.date) -> dict[dt.date, dict]:
                                               "volume": float(r.get("volume") or 0)} for r in rows}
 
 
-def largest(limit: int = 100) -> list[str]:
-    """The largest US listings by the vendor's market capitalization: the pool the ranking draws from."""
+def largest(limit: int = 100, offset: int = 0) -> list[str]:
+    """The largest US listings by the vendor's market capitalization: the pool the ranking draws from. The screener returns
+    at most 100 rows a request; `offset` pages past them (the Joe 10 uses the first page only)."""
     rows = _get("screener", sort="market_capitalization.desc", filters=json.dumps([["exchange", "=", "us"]]),
-                limit=limit, offset=0)
+                limit=limit, offset=offset)
     return [r["code"].replace(".", "-") for r in rows.get("data", [])]
 
 
