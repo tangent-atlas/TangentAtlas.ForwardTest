@@ -53,15 +53,34 @@ def largest(limit: int = 100, offset: int = 0) -> list[str]:
 def company(code: str, on: dt.date) -> dict:
     """Name, type, country, exchange, CIK, and shares outstanding as last reported on or before `on`."""
     data = _get("fundamentals/" + symbol(code), filter="General,outstandingShares")
-    general = data.get("General") or {}
+    return parse_company(code, data, on)
+
+
+def _table(value) -> dict:
+    """A field EODHD normally sends as an object; anything else (text such as "NA", a list, nothing) as an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
+def parse_company(code: str, data, on: dt.date) -> dict:
+    """The fundamentals answer, read defensively: a listing whose share counts aren't the usual table has no reported
+    shares, so the rules can't rank it (rules.eligible requires shares above zero). It is named in the log."""
+    data = _table(data)
+    general = _table(data.get("General"))
+    quarters = _table(data.get("outstandingShares")).get("quarters")
+    rows = quarters.values() if isinstance(quarters, dict) else quarters if isinstance(quarters, list) else []
     reported = []
-    for row in ((data.get("outstandingShares") or {}).get("quarters") or {}).values():
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
         try:
             day = dt.date.fromisoformat(row["dateFormatted"])
-        except (KeyError, ValueError):
+            shares = float(row.get("shares") or 0)
+        except (KeyError, TypeError, ValueError):
             continue
-        if day <= on and row.get("shares"):
-            reported.append((day, float(row["shares"])))
+        if day <= on and shares > 0:
+            reported.append((day, shares))
+    if not reported:
+        print(f"No shares outstanding reported for {code} on or before {on}; it can't be ranked.")
     return {
         "name": general.get("Name") or "",
         "type": general.get("Type") or "",
