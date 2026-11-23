@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: "daily, or init (once, to freeze the starting holdings)"
+        description: "daily; init (once, the Joe 10); or init-tiers (once, the Joe 25, Joe 50 and Joe 100)"
         default: daily
         required: true
 
@@ -20,6 +20,8 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-24.04
+    env:
+      ARCHIVE_DIR: archive-private          # the ranking archive: licensed prices, never committed here
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -30,16 +32,51 @@ jobs:
         id: run
         env:
           EODHD_API_TOKEN: ${{ secrets.EODHD_API_TOKEN }}
-        run: python -m forward.joe10 ${{ github.event.inputs.command || 'daily' }}
+          COMMAND: ${{ github.event.inputs.command || 'daily' }}
+        run: |
+          case "$COMMAND" in
+            init) python -m forward.joe10 init ;;
+            init-tiers) python -m forward.tiers init ;;
+            daily) python -m forward.joe10 daily && python -m forward.tiers daily ;;
+            *) echo "Unknown command: $COMMAND" && exit 1 ;;
+          esac
+      - name: Keep the ranking archive in the private repository
+        env:
+          ARCHIVE_TOKEN: ${{ secrets.ARCHIVE_TOKEN }}
+          ARCHIVE_REPOSITORY: ${{ vars.ARCHIVE_REPOSITORY }}
+        run: |
+          shopt -s nullglob
+          files=(archive-private/*.json)
+          [ ${#files[@]} -eq 0 ] && exit 0
+          if [ -z "$ARCHIVE_TOKEN" ] || [ -z "$ARCHIVE_REPOSITORY" ]; then
+            echo "::error::A ranking was archived but ARCHIVE_TOKEN or ARCHIVE_REPOSITORY is not set; its file would be lost."
+            exit 1
+          fi
+          git clone --depth 1 "https://x-access-token:${ARCHIVE_TOKEN}@github.com/${ARCHIVE_REPOSITORY}.git" private
+          for f in "${files[@]}"; do
+            [ -e "private/$(basename "$f")" ] || cp "$f" private/      # an archived file is never overwritten
+          done
+          cd private
+          git config user.name "forward-test"
+          git config user.email "forward-test@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Ranking inputs: $(ls -1 ../archive-private | tr '\n' ' ')"
+          git push
       - name: Commit
         run: |
           git config user.name "forward-test"
           git config user.email "forward-test@users.noreply.github.com"
-          git add state data reports
+          git add state data reports archive
           git diff --cached --quiet || git commit -m "Close of $(jq -r .last_date state/joe10.json)"
           git push
       - name: Monthly release
         if: steps.run.outputs.month != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ steps.run.outputs.month }}" --title "Results through ${{ steps.run.outputs.month }}" --notes-file "${{ steps.run.outputs.report }}"
+          MONTH: ${{ steps.run.outputs.month }}
+        run: |
+          cat "${{ steps.run.outputs.report }}" > notes.md
+          for f in reports/joe25-$MONTH.md reports/joe50-$MONTH.md reports/joe100-$MONTH.md; do
+            [ -f "$f" ] && { echo; cat "$f"; } >> notes.md
+          done
+          gh release create "v$MONTH" --title "Results through $MONTH" --notes-file notes.md
